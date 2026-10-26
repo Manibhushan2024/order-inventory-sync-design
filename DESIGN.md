@@ -1,7 +1,7 @@
 # Order & Inventory Sync Service — Design
 
 Manibhushan Kumar · October 2026 · Mars Cosmetics engineering assessment
-Diagram: [diagram/architecture.png](diagram/architecture.png) · Reservation pseudo-code: [pseudo/reserve_stock.md](pseudo/reserve_stock.md)
+Diagram: [diagram/architecture.png](diagram/architecture.png) · Reservation pseudo-code: [pseudo/reserve_stock.md](pseudo/reserve_stock.md) · Beyond v1 (per-channel reserves, thresholds, payment-first rollback, sub-10 s sync): [BEYOND_V1.md](BEYOND_V1.md)
 
 ## 0. The one idea everything rests on
 
@@ -69,7 +69,7 @@ Multi-line orders reserve lines in sorted SKU order inside one transaction (no l
 
 **Safety buffer.** Per SKU, default 0, set to 2–3 units on hero SKUs during a sale. It covers the seconds between a reservation and the slowest channel showing the new number, which is where the 0.5 percent cancellation budget is spent. It is a dial tuned from the push-latency metric, not a guess.
 
-**Cancellations and returns (6 percent).** Cancel releases `reserved` (ledger RELEASE_CANCEL). A return adds to `on_hand` only after warehouse QC marks it saleable (RELEASE_RETURN). Both mark the SKU dirty, so stock is back on sale inside the same 60-second budget.
+**Cancellations and returns (6 percent).** Cancel releases `reserved` (ledger RELEASE_CANCEL). A return adds to `on_hand` only after warehouse QC marks it saleable (RELEASE_RETURN). Both mark the SKU dirty, so stock is back on sale inside the same 60-second budget. Per-channel reserves, low-stock thresholds and a payment-first two-stage reservation with rollback are specified in [BEYOND_V1.md](BEYOND_V1.md); they sit on top of this statement without changing it.
 
 ## 5. Stock push within 60 seconds
 
