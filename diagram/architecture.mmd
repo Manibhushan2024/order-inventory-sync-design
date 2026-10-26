@@ -1,0 +1,53 @@
+flowchart LR
+  subgraph CH["Sales channels"]
+    WEB["Own website\nwebhook + direct DB"]
+    NYK["Nykaa\nwebhook (dupes, out of order)\nstock API 5 req/s, 1 SKU"]
+    FLP["Flipkart\npoll every 2 min\nbulk 50 SKUs, 10 req/s, 429"]
+    BLK["Blinkit\nwebhook\nREST (2% timeouts) + daily CSV"]
+  end
+
+  subgraph AWS["AWS ap-south-1 (~₹20k / month)"]
+    API["api (NestJS, Fargate x2)\nverify HMAC → store raw event → enqueue → 200"]
+    subgraph WK["worker (NestJS + BullMQ, Fargate x1→3)"]
+      ING["ingest queue\nnormalise → reserve (1 tx)"]
+      POLL["poll:flipkart\nevery 2 min, overlap cursor"]
+      PW["push:website"]
+      PN["push:nykaa\ntoken bucket 5/s"]
+      PF["push:flipkart\n50-SKU batches, 10/s"]
+      PB["push:blinkit\nretry on timeout"]
+      ERP["erp queue\noutbox sender, idempotent"]
+      REC["reconcile every 15 min\nBlinkit CSV daily"]
+    end
+    PG[("PostgreSQL (RDS)\norders · order_items\ninventory (conditional UPDATE)\nstock_ledger (append-only audit)\noutbox · channel_events\nchannel_stock_view")]
+    RD[("Redis (ElastiCache)\nBullMQ queues\ndirty_skus set\nrate-limit buckets")]
+    OPS["Ops screen (Next.js)\nfailed syncs + Retry\nSKU ledger view"]
+  end
+
+  BC["ERP: MS Business Central\ninvoicing + dispatch\n(down 1–2 h Sundays)"]
+
+  WEB -- webhook --> API
+  NYK -- webhook --> API
+  BLK -- webhook --> API
+  FLP -. orders list .-> POLL
+  API -- "INSERT channel_events\n(UNIQUE channel+event id)" --> PG
+  API -- enqueue --> RD
+  POLL -- raw events --> PG
+  RD --> ING
+  ING -- "BEGIN: insert order,\nUPDATE inventory … WHERE available >= qty,\nledger row, outbox row; COMMIT" --> PG
+  ING -- "SADD dirty_skus (after commit)" --> RD
+  RD --> PW & PN & PF & PB
+  PG -- "available per SKU" --> PW & PN & PF & PB
+  PW --> WEB
+  PN --> NYK
+  PF --> FLP
+  PB --> BLK
+  PG -- "outbox PENDING rows" --> ERP
+  ERP -- "create sales order\nidempotency key = channel:order id" --> BC
+  REC --> PG
+  OPS --> PG
+  OPS -- "Retry → status PENDING" --> PG
+
+  classDef store fill:#eef2ff,stroke:#1F4E79,stroke-width:1.5px,color:#111;
+  classDef ext fill:#fff7e6,stroke:#b7791f,color:#111;
+  class PG,RD store;
+  class WEB,NYK,FLP,BLK,BC ext;
